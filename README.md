@@ -15,7 +15,7 @@ Ska systemet försöka hitta filmer som är objektivt lika den valda filmen, ell
 Om målet är att hitta liknande filmer borde större vikt läggas vid genrer och tags.
 Samtidigt finns det då en risk att de liknande filmerna som rekommenderas har fått dåliga betyg och ändå inte passar för användaren.
 
-För denna rekommendationsmotor är det collaborative filtering som väger mest, där betygsbaserad likhet används, och alltså mönster i hur användare har satt betyg. Om till exempel en stor andel användare som gav _Forrest Gump (1994)_ 5 i betyg även gav _Jumanji (1995)_ 5 i betyg, anses dessa filmer vara relaterade i smak, även om de har helt olika henrer.
+För denna rekommendationsmotor är det collaborative filtering som väger mest, där betygsbaserad likhet används, och alltså mönster i hur användare har satt betyg. Om till exempel en stor andel användare som gav _Forrest Gump (1994)_ 5 i betyg även gav _Jumanji (1995)_ 5 i betyg, anses dessa filmer vara relaterade i smak, även om de har helt olika genrer.
 
 Utöver betygsdata, används även tags som användare skrivit in kombinerat med genrer för varje film. Här används TF-IDF vektorisering för att hitta andra likheter mellan filmerna. Detta kan då ge en högre likhet mellan filmer av exakt samma genrer, eller om användare skrivit in skådespelares namn i tags på filmerna.
 
