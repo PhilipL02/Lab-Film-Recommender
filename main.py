@@ -2,16 +2,13 @@ from dash import Dash, html, dcc, Input, Output, callback
 import dash_ag_grid as dag
 import dash_bootstrap_components as dbc
 from dash.exceptions import PreventUpdate
-from utils import check_required_files, load_app_data, get_movie_dropdown_options, create_movie_similarity_models, get_top_movie_recommendations
+from utils import check_required_data_files, load_app_data, get_movie_dropdown_options, create_movie_similarity_models, get_top_movie_recommendations
 
-# Läsa igenom labb-instruktioner igen och måste skriva README
-
-# Skapa en requirements.txt när det är klart. (pip installs som jag kan uninstall innan?)
-
-
-# Check that the required files exists.
+# Check that the required data files exists.
 # If a file is missing, the program will stop executing.
-check_required_files()
+check_required_data_files()
+
+print('\nStarting Dash app...\n')
 
 df_movies, df_ratings = load_app_data()
 movie_rating_similarity_matrix, movie_tags_similarity_matrix = create_movie_similarity_models(df_movies, df_ratings)
@@ -79,25 +76,25 @@ app.layout = dbc.Container([
     Input('movie-select-dropdown', 'value'),
     prevent_initial_call=True # Prevent the callback to be called on initial page load.
 )
-def update_movie_recommendations(movieId):
+def update_movie_recommendations(movieId: int):
     if movieId is None:
         # If the movieId is not defined, exit the callback function and prevent update.
         raise PreventUpdate
     
     try:
         # Get recommended movies based on the selected movieId.
-        movie_recommendations = get_top_movie_recommendations(movieId, df_movies, movie_rating_similarity_matrix, movie_tags_similarity_matrix)
+        movie_recommendations = get_top_movie_recommendations(df_movies, movie_rating_similarity_matrix, movie_tags_similarity_matrix, movieId)
 
         movie_recommendations['genres'] = movie_recommendations['genres'].apply(', '.join)
         movie_recommendations['similarity_percent'] = (movie_recommendations['final_similarity'] * 100).round(0).astype(int)
 
-        # Convert the DataFrame to a list with every row as a dictionary.
+        # Convert the DataFrame to a list with every row/movie as a dictionary.
         records = movie_recommendations.to_dict('records') 
 
         return records, 'first'
     
     except Exception as e:
-        print(f"Error while getting movie recommendations: {e}")
+        print(f'Error while getting movie recommendations: {e}')
         return [], 'first'  # Return empty data if error occurred.
 
 
