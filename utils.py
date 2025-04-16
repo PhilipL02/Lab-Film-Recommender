@@ -1,190 +1,192 @@
 import pandas as pd
-import numpy as np
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.preprocessing import MinMaxScaler
+from sklearn.feature_extraction.text import TfidfVectorizer
+import os
+import sys
 
 
-def filter_out_popular_movies(df_ratings, min_ratings=100):
+def check_required_files():
+    required_files = [
+        './data/tags.csv',
+        './data/movies.csv',
+        './data/ratings.csv'
+    ]
+
+    missing_files = [file for file in required_files if not os.path.exists(file)]
+
+    if missing_files:
+        print("Error: The following required file(s) are missing:")
+        for file in missing_files:
+            print(f" - {file}")
+        sys.exit()
+
+
+def get_movie_dropdown_options(df_movies):
+    movie_dropdown_options = [{ 'label': title, 'value': movieId } for title, movieId in zip(df_movies['title'], df_movies['movieId'])]
+    
+    return sorted(movie_dropdown_options, key=lambda d: d['label'])
+
+
+def filter_out_popular_movies(df_ratings, min_amount_ratings=1000):
+    # Get the number of ratings per movie.
     movie_counts = df_ratings['movieId'].value_counts()
-    popular_movie_ids = movie_counts[movie_counts >= min_ratings].index
-    return df_ratings[df_ratings['movieId'].isin(popular_movie_ids)]
+
+    # Get movieIds of the movies with enough amount of ratings.
+    popular_movieIds = movie_counts[movie_counts >= min_amount_ratings].index
+
+    # Return the ratings for only the filtered movies.
+    return df_ratings[df_ratings['movieId'].isin(popular_movieIds)]
 
 
-def filter_out_popular_users(df_ratings, min_ratings=100):
+def filter_out_popular_users(df_ratings, min_amount_ratings=1000):
+    # Get the number of ratings per user.
     user_counts = df_ratings['userId'].value_counts()
-    expert_user_ids = user_counts[user_counts >= min_ratings].index
-    return df_ratings[df_ratings['userId'].isin(expert_user_ids)]
+    
+    # Get userIds of the users with enough amount of ratings.
+    expert_userIds = user_counts[user_counts >= min_amount_ratings].index
+    
+    # Return the ratings for only the filtered users.
+    return df_ratings[df_ratings['userId'].isin(expert_userIds)]
 
 
-def load_app_data():
-    movies = pd.read_csv('./data/movies.csv')
-    ratings = pd.read_csv('./data/ratings.csv')
-
-    ratings.drop('timestamp', axis='columns', inplace=True)
-
-    ratings = filter_out_popular_movies(ratings, min_ratings=1000)
-    ratings = filter_out_popular_users(ratings, min_ratings=1000)
-
-    # Fully ignore non-popular movies
-    movieIds = ratings['movieId'].unique()
-    movies = movies[movies['movieId'].isin(movieIds)].reset_index()
-
-    mean_ratings = ratings.groupby('movieId')['rating'].mean().reset_index()
-
+def transform_movie_ratings(df_ratings):
+    # Calculate mean rating per movie and merge with df_ratings
+    mean_ratings = df_ratings.groupby('movieId')['rating'].mean().reset_index()
     mean_ratings.rename(columns={'rating': 'meanRating'}, inplace=True)
+    df_ratings = df_ratings.merge(mean_ratings[['movieId', 'meanRating']], on='movieId', how='left')
 
-    ratings = ratings.merge(mean_ratings, on='movieId', how='left')
+    df_ratings['rating'] -= df_ratings['meanRating']
 
-    ratings['rating'] = ratings['rating'] - ratings['meanRating']
-
-    movies = movies.merge(mean_ratings, on='movieId', how='left')
+    df_ratings.drop('meanRating', axis='columns', inplace=True)
 
     scaler = MinMaxScaler()
 
-    ratings[['rating']] = scaler.fit_transform(ratings[['rating']])
+    df_ratings['rating'] = scaler.fit_transform(df_ratings[['rating']])
 
-    ratings.drop(['meanRating'], axis='columns', inplace=True)
+    return df_ratings
+
+
+def process_movie_genres(df_movies):
+    # Replace '(no genres listed)' with an empty string
+    df_movies.loc[df_movies['genres'] == '(no genres listed)', 'genres'] = ''
     
-    movies['genres'] = movies['genres'].apply(lambda x: x.split('|'))
+    # Split genres by '|' into a list
+    df_movies['genres'] = df_movies['genres'].apply(lambda x: x.split('|'))
 
-    return movies, ratings
-
-
-def create_movie_options(df_movies):
-    movie_options = []
-    for i, movie in df_movies.iterrows():
-        movie_options.append({'label': movie['title'], 'value': movie['movieId']})
-
-    movie_options = sorted(movie_options, key=lambda d: d['label'])
-
-    return movie_options
+    return df_movies
 
 
-def rating_recommendations(movieId, df_movies, design_matrix, similarity_score):
-    where_value = np.where(design_matrix.index==movieId)
+def load_app_data():
+    df_movies = pd.read_csv('./data/movies.csv')
+    df_ratings = pd.read_csv('./data/ratings.csv', usecols=['userId', 'movieId', 'rating'])
 
-    if not len(where_value) or not len(where_value[0]):
-        print("Movie does not exist")
-        return
-
-    main_movie_index = where_value[0][0]
-
-    similar_movies = sorted(list(enumerate(similarity_score[main_movie_index])), key=lambda x: x[1], reverse=True)
-
-    data = []
-    for index, _ in similar_movies:
-        index_value = design_matrix.index[index]
-        if index_value in design_matrix.index:
-            df_row = df_movies[df_movies['movieId'] == index_value].iloc[0]
-
-            similarity_score_for_movie = similarity_score[main_movie_index][index]
-            df_row["similarity"] = similarity_score_for_movie
-
-            data.append(df_row)
-        else:
-            print(f"Index {index_value} finns inte i design_matrix.")
-        
-    data = pd.DataFrame(data)
-
-    return data
-
-
-def create_design_matrix(df_merged):
-    design_matrix = df_merged.pivot_table(index='movieId', columns='userId', values='rating')
-    design_matrix.fillna(0, inplace=True)
-
-    return design_matrix
-
-
-def make_model(matrix):
-    scaler = StandardScaler(with_mean=True, with_std=True)
-    scaled = scaler.fit_transform(matrix)
-    sim_score = cosine_similarity(scaled)
-    return sim_score
-
-
-def load_tags_data(movies):
-    tags = pd.read_csv('./data/tags.csv')
+    # Filter out popular movies and users with at least a minimum number of ratings
+    df_ratings = filter_out_popular_movies(df_ratings, min_amount_ratings=1000)
+    df_ratings = filter_out_popular_users(df_ratings, min_amount_ratings=1000)
     
-    tags.drop("timestamp", axis="columns", inplace=True)
+    # Filter df_movies to include only those movies that have ratings in df_ratings
+    df_movies = df_movies[df_movies['movieId'].isin(df_ratings['movieId'].unique())].reset_index(drop=True)
 
-    movieIds = movies["movieId"]
-
-    tags = tags[tags["movieId"].isin(movieIds)]
-    tags['tag'] = tags['tag'].astype(str)
-    tags_per_movie = tags.groupby("movieId")[["tag"]].agg(' '.join)
-    df_merged = movies.merge(tags_per_movie, on="movieId")
-    df_merged['tag'] = movies['genres'].apply(' '.join) + " " + df_merged['tag']
-    df_merged['tag'] = df_merged['tag'].fillna('')
-    df_merged.drop("genres", axis="columns", inplace=True)
+    df_ratings = transform_movie_ratings(df_ratings)
+    df_movies = process_movie_genres(df_movies)
     
-    return df_merged
+    df_movies = add_movie_tags_data(df_movies)
+
+    return df_movies, df_ratings
 
 
-def tag_similarity(df_movie_tags, cosine_sim, movieId):
-    if movieId not in df_movie_tags["movieId"].values:
-        raise ValueError(f"movieId {movieId} not found in dataframe.")
+def add_movie_tags_data(df_movies):
+    df_tags = pd.read_csv('./data/tags.csv', usecols=['userId', 'movieId', 'tag'])
+
+    # Remove rows with any missing values.
+    df_tags.dropna(inplace=True)
     
-    chosen_movie_index = df_movie_tags.index[df_movie_tags["movieId"] == movieId][0]
+    # Keep only tags for movies present in df_movies.
+    df_tags = df_tags[df_tags['movieId'].isin(df_movies['movieId'])]
+
+    # Combine all tags for each movie into a single string.
+    tags_per_movie = df_tags.groupby('movieId')['tag'].apply(' '.join).reset_index()
+
+    # Add the column 'tag' with all combined tags to the movies DataFrame.
+    df_movies = df_movies.merge(tags_per_movie, on='movieId', how='left')
+
+    # If movie does not have any tags, set it to empty string.
+    df_movies['tag'] = df_movies['tag'].fillna('')
+
+    # Add the genres seperated by space to the tag-column.
+    df_movies['tag'] = df_movies['genres'].apply(' '.join) + ' ' + df_movies['tag']
     
-    similarity_scores = cosine_sim[chosen_movie_index]
-
-    similar_movies = []
-
-    for i in range(len(similarity_scores)):
-        similar_movies.append((i, similarity_scores[i]))
-
-    similar_movies_sorted = sorted(similar_movies, key=lambda x: x[1], reverse=True)
-
-    top_similar_movies = similar_movies_sorted
-
-    indices, similarities = zip(*top_similar_movies)
-
-    list_to_return = df_movie_tags.iloc[list(indices)].copy()
-
-    list_to_return["similarity"] = similarities
-
-    return list_to_return
+    return df_movies
 
 
-def normalize_series(series):
-    min_val = series.min()
-    max_val = series.max()
+def normalize_similarity_scores(similarity_scores):
+    min_val = similarity_scores.min()
+    max_val = similarity_scores.max()
     range_val = max_val - min_val
 
-    # Hantera ifall range_val är 0, så vi inte delar med 0
+    # If the range is 0, all values are the same, so return 0 for all
     if range_val == 0:
-        return pd.Series(0, index=series.index)
-    else:
-        return (series - min_val) / range_val
+        return pd.Series(0, index=similarity_scores.index)
+    
+    return (similarity_scores - min_val) / range_val
 
 
-def get_recommended_movies(movieId, df_movies, design_matrix, model, df_movie_tags, cosine_sim):
-    movie_recommendations = rating_recommendations(movieId, df_movies, design_matrix, model)
+def calculate_final_similarity(df_movies, rating_sim_scores, tag_sim_scores, movieId, weight_ratings=0.7, weight_tags=0.3):
+    df_movies['ratings_similarity'] = normalize_similarity_scores(rating_sim_scores)
+    df_movies['tags_similarity'] = normalize_similarity_scores(tag_sim_scores)
 
-    tag_similarity_movies = tag_similarity(df_movie_tags, cosine_sim, movieId)
+    df_movies['final_similarity'] = (weight_ratings * df_movies['ratings_similarity'] + weight_tags * df_movies['tags_similarity'])
 
-    movie_recommendations["similarity"] = normalize_series(movie_recommendations["similarity"])
-    tag_similarity_movies["similarity"] = normalize_series(tag_similarity_movies["similarity"])
+    df_movies = df_movies[df_movies['movieId'] != movieId]
 
-    for index, movie in movie_recommendations.iterrows():
-        match = tag_similarity_movies[tag_similarity_movies["movieId"] == movie["movieId"]]
-        
-        if not match.empty:
-            tags_sim = match.iloc[0]["similarity"]
-            ratings_sim = movie["similarity"]
-
-            # Weighted combination
-            combined_sim = 0.7 * ratings_sim + 0.3 * tags_sim
-            
-            movie_recommendations.at[index, "ratings_similarity"] = ratings_sim
-            movie_recommendations.at[index, "tags_similarity"] = tags_sim
-            movie_recommendations.at[index, "final_similarity"] = combined_sim
+    return df_movies
 
 
-    movie_recommendations = movie_recommendations[movie_recommendations["movieId"] != movieId]
-    # Get top 50 recommended movies
-    movie_recommendations = movie_recommendations.sort_values(by="final_similarity", ascending=False).head(50)
+def get_top_movie_recommendations(movieId, df_movies, movie_rating_similarity_matrix, movie_tags_similarity_matrix, top_n=50):
+    if movieId not in df_movies['movieId'].values:
+        print(f"Movie with movieId {movieId} does not exist in the movie DataFrame.")
+        return pd.DataFrame()
 
-    return movie_recommendations
+    # Get the index of the selected movie in the movies DataFrame
+    chosen_movie_index = df_movies.index[df_movies['movieId'] == movieId][0]
+
+    # Get the similarity scores for the chosen movie
+    rating_sim_scores = movie_rating_similarity_matrix[chosen_movie_index]
+    tag_sim_scores = movie_tags_similarity_matrix[chosen_movie_index]
+
+    # Create a copy of df_movies to calculate similarities without modifying the original DataFrame
+    movie_recommendations = df_movies.copy()
+
+    # Calculate final similarity scores based on ratings and tags
+    movie_recommendations = calculate_final_similarity(movie_recommendations, rating_sim_scores, tag_sim_scores, movieId)
+
+    movie_recommendations = movie_recommendations.sort_values(by='final_similarity', ascending=False).head(top_n)
+
+    return movie_recommendations[['movieId', 'title', 'genres', 'final_similarity']]
+
+
+def create_rating_similarity_matrix(df_ratings):
+    user_movie_rating_design_matrix = df_ratings.pivot_table(index='movieId', columns='userId', values='rating')
+    user_movie_rating_design_matrix.fillna(0, inplace=True)
+
+    scaler = StandardScaler(with_mean=True, with_std=True)
+    scaled = scaler.fit_transform(user_movie_rating_design_matrix)
+    
+    return cosine_similarity(scaled)
+
+
+def create_tags_similarity_matrix(df_movies):
+    tfidf_vectorizer = TfidfVectorizer(stop_words='english')
+    tfidf_matrix = tfidf_vectorizer.fit_transform(df_movies['tag'])
+
+    return cosine_similarity(tfidf_matrix)
+
+
+def create_movie_similarity_models(df_movies, df_ratings):
+    movie_rating_similarity_matrix = create_rating_similarity_matrix(df_ratings)
+
+    movie_tags_similarity_matrix = create_tags_similarity_matrix(df_movies)
+
+    return movie_rating_similarity_matrix, movie_tags_similarity_matrix
