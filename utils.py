@@ -45,7 +45,7 @@ def filter_out_popular_movies(df_ratings: pd.DataFrame, min_amount_ratings=1000)
     return df_ratings[df_ratings['movieId'].isin(popular_movieIds)]
 
 
-def filter_out_popular_users(df_ratings: pd.DataFrame, min_amount_ratings=1000) -> pd.DataFrame:
+def filter_out_expert_users(df_ratings: pd.DataFrame, min_amount_ratings=1000) -> pd.DataFrame:
     # Get the number of ratings per user.
     user_counts = df_ratings['userId'].value_counts()
     
@@ -78,9 +78,9 @@ def load_app_data() -> tuple[pd.DataFrame, pd.DataFrame]:
     df_movies = pd.read_csv('./data/movies.csv')
     df_ratings = pd.read_csv('./data/ratings.csv', usecols=['userId', 'movieId', 'rating'])
 
-    # Filter out popular movies and users with at least a minimum number of ratings.
+    # Filter out movies and users with at least a minimum number of ratings.
     df_ratings = filter_out_popular_movies(df_ratings, min_amount_ratings=1000)
-    df_ratings = filter_out_popular_users(df_ratings, min_amount_ratings=1000)
+    df_ratings = filter_out_expert_users(df_ratings, min_amount_ratings=1000)
     
     # Filter df_movies to include only those movies that have ratings in df_ratings.
     df_movies = df_movies[df_movies['movieId'].isin(df_ratings['movieId'].unique())].reset_index(drop=True)
