@@ -8,13 +8,16 @@ import os
 import sys
 
 def check_required_data_files() -> None:
-    required_files = [
+    """
+    Check that all required data files exist. Stops program execution if any file is missing.
+    """
+    required_data_files = [
         './data/tags.csv',
         './data/movies.csv',
         './data/ratings.csv',
     ]
 
-    missing_files = [file for file in required_files if not os.path.exists(file)]
+    missing_files = [file for file in required_data_files if not os.path.exists(file)]
 
     if missing_files:
         print(f'The following required data files are missing: ({', '.join(missing_files)})')
@@ -23,6 +26,9 @@ def check_required_data_files() -> None:
 
 
 def get_movie_dropdown_options(df_movies: pd.DataFrame) -> list:
+    """
+    Create and return movie dropdown options from the provided movies DataFrame.
+    """
     movie_dropdown_options = [{ 'label': title, 'value': movieId } for title, movieId in zip(df_movies['title'], df_movies['movieId'])]
     
     return sorted(movie_dropdown_options, key=lambda d: d['label'])
@@ -51,10 +57,10 @@ def filter_out_popular_users(df_ratings: pd.DataFrame, min_amount_ratings=1000) 
 
 
 def process_movie_genres(df_movies: pd.DataFrame) -> pd.DataFrame:
-    # Replace '(no genres listed)' with an empty string
+    # Replace '(no genres listed)' with an empty string.
     df_movies.loc[df_movies['genres'] == '(no genres listed)', 'genres'] = ''
     
-    # Split genres by '|' into a list
+    # Split genres by '|' into a list.
     df_movies['genres'] = df_movies['genres'].apply(lambda x: x.split('|'))
 
     return df_movies
@@ -72,11 +78,11 @@ def load_app_data() -> tuple[pd.DataFrame, pd.DataFrame]:
     df_movies = pd.read_csv('./data/movies.csv')
     df_ratings = pd.read_csv('./data/ratings.csv', usecols=['userId', 'movieId', 'rating'])
 
-    # Filter out popular movies and users with at least a minimum number of ratings
+    # Filter out popular movies and users with at least a minimum number of ratings.
     df_ratings = filter_out_popular_movies(df_ratings, min_amount_ratings=1000)
     df_ratings = filter_out_popular_users(df_ratings, min_amount_ratings=1000)
     
-    # Filter df_movies to include only those movies that have ratings in df_ratings
+    # Filter df_movies to include only those movies that have ratings in df_ratings.
     df_movies = df_movies[df_movies['movieId'].isin(df_ratings['movieId'].unique())].reset_index(drop=True)
 
     df_movies = process_movie_genres(df_movies)
@@ -90,7 +96,7 @@ def add_movie_tags_data(df_movies: pd.DataFrame) -> pd.DataFrame:
     """
     Enhances the given movies DataFrame by adding a combined 'tag' column.
 
-    This function reads the 'tags.csv'-data and adds all tags together with the genres for every movie space-seperated.
+    This function reads the 'tags.csv'-data and adds all tags together with the genres into a single space-separated string for every movie.
     """
     df_tags = pd.read_csv('./data/tags.csv', usecols=['userId', 'movieId', 'tag'])
     df_tags.dropna(inplace=True)
@@ -112,16 +118,13 @@ def add_movie_tags_data(df_movies: pd.DataFrame) -> pd.DataFrame:
     return df_movies
 
 
-def normalize_similarity_scores(similarity_scores: np.ndarray) -> np.ndarray:
-    min_val = similarity_scores.min()
-    max_val = similarity_scores.max()
-    range_val = max_val - min_val
-
-    # If all values are the same, return zeros
-    if range_val == 0:
-        return np.zeros_like(similarity_scores)
-    
-    return (similarity_scores - min_val) / range_val
+def normalize_similarity_scores(df: pd.DataFrame, columns: list) -> pd.DataFrame:
+    """
+    Normalize the values in the specified columns of a DataFrame to the range [0, 1].
+    """
+    scaler = MinMaxScaler()
+    df[columns] = scaler.fit_transform(df[columns])
+    return df
 
 
 def calculate_final_similarity(
@@ -132,11 +135,22 @@ def calculate_final_similarity(
         weight_ratings: float=0.7, 
         weight_tags: float=0.3
     ) -> pd.DataFrame:
-    df_movies['ratings_similarity'] = normalize_similarity_scores(rating_sim_scores)
-    df_movies['tags_similarity'] = normalize_similarity_scores(tag_sim_scores)
+    """
+    Compute a final similarity score for each movie based on a weighted combination 
+    of ratings-based and tags-based similarity scores.
+    """
+    df_movies['ratings_similarity'] = rating_sim_scores
+    df_movies['tags_similarity'] = tag_sim_scores
 
-    df_movies['final_similarity'] = (weight_ratings * df_movies['ratings_similarity'] + weight_tags * df_movies['tags_similarity'])
+    # Normalize similarity scores to [0, 1].
+    df_movies = normalize_similarity_scores(df_movies, ['ratings_similarity', 'tags_similarity'])
 
+    df_movies['final_similarity'] = (
+        weight_ratings * df_movies['ratings_similarity'] + 
+        weight_tags * df_movies['tags_similarity']
+    )
+
+    # Exclude the provided movieId from the result.
     df_movies = df_movies[df_movies['movieId'] != movieId]
 
     return df_movies
